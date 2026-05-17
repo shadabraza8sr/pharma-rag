@@ -112,7 +112,7 @@ print("FAISS Vector Store Created")
 # ==========================================
 
 retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 3}
+    search_kwargs={"k": 5}
 )
 
 
