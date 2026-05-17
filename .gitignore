@@ -1,9 +1,19 @@
-# environment variables
-backend/.env
+# virtual env
+venv/
+backend/venv/
 
 # python cache
+__pycache__/
 backend/__pycache__/
 *.pyc
 
-# virtual environment
-venv/
+# env file
+.env
+backend/.env
+
+# vector db / heavy files
+backend/vectorstore/
+vectorstore/
+
+# vscode
+.vscode/
