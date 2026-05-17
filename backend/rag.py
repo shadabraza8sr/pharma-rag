@@ -1,7 +1,6 @@
 import os
 
 from dotenv import load_dotenv
-
 from groq import Groq
 
 from langchain_community.document_loaders import PyPDFLoader
@@ -9,83 +8,67 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
-
 # ==========================================
-# LOAD ENV VARIABLES
+# LOAD ENV VARIABLES (LOCAL ONLY)
 # ==========================================
 
 load_dotenv()
 
-
 # ==========================================
-# CONFIGURE GROQ CLIENT
+# GROQ API KEY (SAFE FOR RENDER)
 # ==========================================
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
+    print("⚠️ WARNING: GROQ_API_KEY not found. App will run but LLM will fail.")
+    client = None
+else:
+    client = Groq(api_key=GROQ_API_KEY)
 
-    raise ValueError(
-        "GROQ_API_KEY not found in .env file"
-    )
+# ==========================================
+# SAFE PDF LOADING FUNCTION
+# (IMPORTANT: prevents Render crash)
+# ==========================================
 
-client = Groq(
-    api_key=GROQ_API_KEY
-)
+def load_documents():
+    documents = []
+    pdf_folder = "documents"
+
+    if not os.path.exists(pdf_folder):
+        print(f"⚠️ Folder '{pdf_folder}' not found")
+        return documents
+
+    for file in os.listdir(pdf_folder):
+        if file.endswith(".pdf"):
+            pdf_path = os.path.join(pdf_folder, file)
+            print(f"Loading PDF: {file}")
+
+            loader = PyPDFLoader(pdf_path)
+            documents.extend(loader.load())
+
+    print("PDFs Loaded Successfully")
+    return documents
 
 
 # ==========================================
-# LOAD PDF DOCUMENTS
+# LOAD + SPLIT DOCUMENTS
 # ==========================================
 
-documents = []
-
-pdf_folder = "documents"
-
-if not os.path.exists(pdf_folder):
-
-    raise FileNotFoundError(
-        f"Folder '{pdf_folder}' not found"
-    )
-
-for file in os.listdir(pdf_folder):
-
-    if file.endswith(".pdf"):
-
-        pdf_path = os.path.join(
-            pdf_folder,
-            file
-        )
-
-        print(f"Loading PDF: {file}")
-
-        loader = PyPDFLoader(pdf_path)
-
-        documents.extend(
-            loader.load()
-        )
-
-print("PDFs Loaded Successfully")
-
-
-# ==========================================
-# SPLIT DOCUMENTS INTO CHUNKS
-# ==========================================
+documents = load_documents()
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=50
 )
 
-docs = text_splitter.split_documents(
-    documents
-)
+docs = text_splitter.split_documents(documents)
 
 print("Text Split Into Chunks")
 
 
 # ==========================================
-# LOAD EMBEDDING MODEL
+# EMBEDDINGS MODEL
 # ==========================================
 
 embeddings = HuggingFaceEmbeddings(
@@ -96,57 +79,32 @@ print("Embeddings Model Loaded")
 
 
 # ==========================================
-# CREATE FAISS VECTOR STORE
+# FAISS VECTOR STORE
 # ==========================================
 
-vectorstore = FAISS.from_documents(
-    docs,
-    embeddings
-)
+vectorstore = FAISS.from_documents(docs, embeddings)
 
 print("FAISS Vector Store Created")
 
 
-# ==========================================
-# CREATE RETRIEVER
-# ==========================================
-
-retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 5}
-)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 
 # ==========================================
-# MAIN QUESTION ANSWERING FUNCTION
+# MAIN QA FUNCTION
 # ==========================================
 
 def ask_question(query):
-
     try:
-
         print(f"\nQuestion: {query}")
 
-        # ==========================================
-        # RETRIEVE RELEVANT DOCUMENTS
-        # ==========================================
-
+        # Retrieve docs
         relevant_docs = retriever.invoke(query)
 
         if not relevant_docs:
+            return "Answer not found in documents."
 
-            return "No relevant documents found."
-
-        # ==========================================
-        # BUILD CONTEXT
-        # ==========================================
-
-        context = "\n\n".join(
-            [doc.page_content for doc in relevant_docs]
-        )
-
-        # ==========================================
-        # CREATE PROMPT
-        # ==========================================
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])
 
         prompt = f"""
 You are a pharmaceutical AI assistant.
@@ -159,19 +117,17 @@ reply exactly:
 "Answer not found in documents."
 
 ================ CONTEXT ================
-
 {context}
 
 ================ QUESTION ================
-
 {query}
 
 ================ ANSWER ================
 """
 
-        # ==========================================
-        # GROQ API CALL
-        # ==========================================
+        # If API key missing
+        if client is None:
+            return "Error: GROQ_API_KEY not configured on server."
 
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -188,18 +144,12 @@ reply exactly:
             temperature=0
         )
 
-        # ==========================================
-        # EXTRACT ANSWER
-        # ==========================================
-
         answer = response.choices[0].message.content
 
-        print("\nAnswer Generated Successfully")
+        print("Answer Generated Successfully")
 
         return answer
 
     except Exception as e:
-
-        print("\nERROR:", str(e))
-
+        print("ERROR:", str(e))
         return f"Error: {str(e)}"
