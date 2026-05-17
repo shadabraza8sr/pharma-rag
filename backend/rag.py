@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -8,112 +7,107 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# ==========================================
-# LOAD ENV VARIABLES (LOCAL ONLY)
-# ==========================================
+# ==============================
+# GLOBAL VARIABLES (lazy init)
+# ==============================
+client = None
+retriever = None
 
-load_dotenv()
 
-# ==========================================
-# GROQ API KEY (SAFE FOR RENDER)
-# ==========================================
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-if not GROQ_API_KEY:
-    print("⚠️ WARNING: GROQ_API_KEY not found. App will run but LLM will fail.")
-    client = None
-else:
-    client = Groq(api_key=GROQ_API_KEY)
-
-# ==========================================
-# SAFE PDF LOADING FUNCTION
-# (IMPORTANT: prevents Render crash)
-# ==========================================
-
+# ==============================
+# LOAD PDFS SAFELY
+# ==============================
 def load_documents():
     documents = []
     pdf_folder = "documents"
 
     if not os.path.exists(pdf_folder):
-        print(f"⚠️ Folder '{pdf_folder}' not found")
+        print("WARNING: documents folder not found")
         return documents
 
     for file in os.listdir(pdf_folder):
         if file.endswith(".pdf"):
-            pdf_path = os.path.join(pdf_folder, file)
+            path = os.path.join(pdf_folder, file)
             print(f"Loading PDF: {file}")
 
-            loader = PyPDFLoader(pdf_path)
+            loader = PyPDFLoader(path)
             documents.extend(loader.load())
 
-    print("PDFs Loaded Successfully")
+    print("PDF loading completed")
     return documents
 
 
-# ==========================================
-# LOAD + SPLIT DOCUMENTS
-# ==========================================
+# ==============================
+# INIT FUNCTION (CALLED ON STARTUP)
+# ==============================
+def init_rag():
+    global client, retriever
 
-documents = load_documents()
+    load_dotenv()
 
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50
-)
+    # --------------------------
+    # GROQ CLIENT
+    # --------------------------
+    api_key = os.getenv("GROQ_API_KEY")
 
-docs = text_splitter.split_documents(documents)
+    if api_key:
+        client = Groq(api_key=api_key)
+    else:
+        print("WARNING: GROQ_API_KEY missing")
+        client = None
 
-print("Text Split Into Chunks")
+    # --------------------------
+    # LOAD + SPLIT DOCUMENTS
+    # --------------------------
+    documents = load_documents()
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=50
+    )
+
+    docs = splitter.split_documents(documents)
+
+    # --------------------------
+    # EMBEDDINGS
+    # --------------------------
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+
+    # --------------------------
+    # VECTOR STORE (FAISS)
+    # --------------------------
+    vectorstore = FAISS.from_documents(docs, embeddings)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+    print("RAG system initialized successfully")
 
 
-# ==========================================
-# EMBEDDINGS MODEL
-# ==========================================
+# ==============================
+# QUESTION ANSWERING FUNCTION
+# ==============================
+def ask_question(query: str):
+    global retriever, client
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+    print(f"\nQuestion: {query}")
 
-print("Embeddings Model Loaded")
+    if retriever is None:
+        return "RAG system not initialized"
 
+    docs = retriever.invoke(query)
 
-# ==========================================
-# FAISS VECTOR STORE
-# ==========================================
+    if not docs:
+        return "Answer not found in documents."
 
-vectorstore = FAISS.from_documents(docs, embeddings)
+    context = "\n\n".join([d.page_content for d in docs])
 
-print("FAISS Vector Store Created")
-
-
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-
-
-# ==========================================
-# MAIN QA FUNCTION
-# ==========================================
-
-def ask_question(query):
-    try:
-        print(f"\nQuestion: {query}")
-
-        # Retrieve docs
-        relevant_docs = retriever.invoke(query)
-
-        if not relevant_docs:
-            return "Answer not found in documents."
-
-        context = "\n\n".join([doc.page_content for doc in relevant_docs])
-
-        prompt = f"""
+    prompt = f"""
 You are a pharmaceutical AI assistant.
 
 Answer ONLY using the provided context.
 
-If the answer is not present in the context,
-reply exactly:
-
+If not found, say:
 "Answer not found in documents."
 
 ================ CONTEXT ================
@@ -125,31 +119,22 @@ reply exactly:
 ================ ANSWER ================
 """
 
-        # If API key missing
-        if client is None:
-            return "Error: GROQ_API_KEY not configured on server."
+    if client is None:
+        return "ERROR: GROQ_API_KEY not configured"
 
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a pharmaceutical AI assistant."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0
-        )
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a pharmaceutical AI assistant."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        temperature=0
+    )
 
-        answer = response.choices[0].message.content
-
-        print("Answer Generated Successfully")
-
-        return answer
-
-    except Exception as e:
-        print("ERROR:", str(e))
-        return f"Error: {str(e)}"
+    return response.choices[0].message.content
