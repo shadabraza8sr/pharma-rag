@@ -1,19 +1,14 @@
-# virtual env
 venv/
 backend/venv/
 
-# python cache
 __pycache__/
 backend/__pycache__/
 *.pyc
 
-# env file
 .env
 backend/.env
 
-# vector db / heavy files
-backend/vectorstore/
 vectorstore/
+backend/vectorstore/
 
-# vscode
 .vscode/

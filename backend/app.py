@@ -1,13 +1,11 @@
-import os
 from fastapi import FastAPI
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from rag import init_rag, ask_question
 
 app = FastAPI()
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,25 +19,12 @@ class Query(BaseModel):
 
 
 @app.on_event("startup")
-def startup_event():
-    print("Initializing RAG system...")
+def startup():
+    print("Initializing RAG...")
     init_rag()
-    print("RAG system ready")
-
-
-@app.get("/")
-def root():
-    return {"status": "Backend running"}
+    print("RAG ready")
 
 
 @app.post("/ask")
 def ask(data: Query):
     return {"answer": ask_question(data.question)}
-
-
-# ✅ IMPORTANT: Render port binding
-if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
